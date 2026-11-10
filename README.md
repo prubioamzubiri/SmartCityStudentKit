@@ -4,7 +4,7 @@ Librería de Python para manejar desde un programa la API REST del simulador
 [SmartCity Donostia](https://github.com/prubioamzubiri/SmartCity): leer el estado de la ciudad, descargar
 históricos y actuar sobre ella (cortar calles, cambiar semáforos, mover autobuses, limitar el acceso de coches...).
 
-- Solo usa la biblioteca estándar (Python ≥ 3.9). `pandas` es opcional, para recibir los históricos como `DataFrame`.
+- Solo usa la biblioteca estándar (Python ≥ 3.10). `pandas` es opcional, para recibir los históricos como `DataFrame`.
 - Cubre todos los endpoints de la [guía de la API](https://github.com/prubioamzubiri/SmartCity/blob/main/docs/API.md).
 - Las respuestas son los mismos `dict` / `list` que devuelve el servidor; los errores son excepciones con el mensaje
   del servidor.
