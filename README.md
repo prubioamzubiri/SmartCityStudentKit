@@ -60,6 +60,22 @@ city.scale()             # 52.1
 city.sleep_sim(minutes=15)   # espera ≈ 17 s reales
 ```
 
+### Tu ciudad
+
+Cada grupo tiene su propia ciudad: `state()` dice su semilla (`seed`, de la que salen su tráfico, su tiempo y sus
+eventos), el segundo simulado en que arrancó (`startSeconds`) y si las escrituras necesitan token (`writeProtected`).
+
+La **demanda** (coches y peatones en hora punta) la fija el servidor y varía un poco cada día: se puede leer en
+`state()["params"]`, pero no cambiar.
+
+Algunos detalles del simulador que importan al gestionar:
+
+- Un semáforo **apagado** (`off`) o en **ámbar intermitente** (`flashing`) deja el cruce sin regular: los coches
+  llegan despacio y ceden el paso a la calle con prioridad, y paran cuando cruzan peatones (en ámbar los peatones
+  tienen prioridad y cruzan más). De noche puede ahorrar esperas; en hora punta forma colas.
+- En los **pasos de cebra sin semáforo** los coches paran mientras cruza gente, más a menudo cuanta más gente hay en
+  la calle.
+
 ## Referencia rápida
 
 | Qué | Métodos |
@@ -75,8 +91,8 @@ city.sleep_sim(minutes=15)   # espera ≈ 17 s reales
 | Sensores de peatones | `city.pedestrian_sensors.…` (los mismos métodos) |
 | Semáforos | `city.signals.list(all=, lat=, lon=, radius=)`, `.get(id)`, `.update(id, mode=, green=, green_a=, green_b=, yellow=, schedule=)`, `.reset(id)`, `.plan()`, `.set_plan(default, signals)` |
 | Restricciones | `city.restrictions.list()`, `.get(id)`, `.create(mode, ...)`, `.close_streets(ways, buses=)`, `.limit_zone(limit, radius, lat=, lon=)`, `.update(id, mode=, limit=, name=)`, `.delete(id)`, `.clear()` |
-| Demanda | `city.set_params(max_cars=, max_pedestrians=, scenario=)` |
-| Históricos | `city.history.traffic()`, `.pedestrians()`, `.parking()`, `.buses()`, `.bikes()`, `.city()`, `.weather()`, `.events()`, `.download(kind, path)`, `.csv(kind)` |
+| Demanda | `city.state()["params"]` (solo lectura: la fija el servidor) |
+| Históricos | `city.history.traffic()`, `.pedestrians()`, `.parking()`, `.buses()`, `.bikes()`, `.city()`, `.weather()`, `.events()`, `.download(kind, path)`, `.update(kind, path)` (incremental), `.csv(kind)` |
 | Cualquier otra ruta | `city.request(method, path, params=, body=)`, `city.get(path, **params)` |
 
 Constantes con los valores admitidos: `RestrictionMode`, `SignalMode` y `Scenario`.
@@ -142,6 +158,23 @@ city.history.download("buses", "autobuses.csv", line_id="L1")
 
 Las fechas pueden ser texto ISO (`"2026-01-05"`, `"2026-01-05T08:00"`), `date` o `datetime`; son horas simuladas,
 `start` incluida y `end` excluida.
+
+### Recoger datos poco a poco
+
+Durante el proyecto se acumulan años simulados de datos: no hace falta descargarlo todo cada vez.
+`history.update(kind, path)` añade a un CSV solo las filas nuevas desde la última que tiene (la primera vez lo crea
+con todo). Devuelve cuántas filas ha añadido:
+
+```python
+city.history.update("city", "datos/ciudad.csv")
+city.history.update("traffic", "datos/trafico_S1.csv", id="S1")   # un fichero por filtro
+city.history.update("weather", "datos/tiempo.csv")
+```
+
+Ejecútalo cada cierto tiempo (a mano, con `cron` o en un bucle: ver [`examples/recoger.py`](examples/recoger.py)).
+Cada fila se graba cuando su intervalo termina, así que nunca llega una a medias; los eventos (`events`) no admiten
+descarga incremental porque su asistencia se publica al terminar. Con la API directamente es lo mismo: pide
+`?from=` la última hora que tienes más un segundo (`from` es inclusivo).
 
 ### Errores
 

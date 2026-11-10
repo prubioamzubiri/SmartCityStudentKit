@@ -21,14 +21,14 @@ class SignalMode:
     """Modos de ``PATCH /api/signals/<id>``."""
 
     NORMAL = "normal"      #: ciclo normal
-    OFF = "off"            #: apagado: nadie se detiene
-    FLASHING = "flashing"  #: ámbar intermitente: nadie se detiene
+    OFF = "off"            #: apagado: cruce sin regular; los coches ceden el paso y los peatones cruzan cuando hay hueco
+    FLASHING = "flashing"  #: ámbar intermitente: cruce sin regular con prioridad para los peatones
     ALL_RED = "all_red"    #: todos se detienen
     ALL = (NORMAL, OFF, FLASHING, ALL_RED)
 
 
 class Scenario:
-    """Escenarios de demanda de ``PUT /api/params``."""
+    """Escenarios de demanda (``state()["params"]["scenario"]``). La demanda la fija el servidor: no se puede cambiar."""
 
     AUTO = "auto"
     WEEKDAY = "weekday"
@@ -49,3 +49,6 @@ HISTORIES = {
     "weather": "/api/weather.csv",
     "events": "/api/events.csv",
 }
+
+#: Columna con la hora de cada fila (para la descarga incremental); por defecto ``timestamp``.
+TIME_COLUMNS = {"weather": "time"}
