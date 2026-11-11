@@ -148,6 +148,36 @@ class ClientTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.city.history.csv("aviones")
 
+    def test_history_update_appends_only_new_rows(self):
+        from fake_server import TRAFFIC_CSV
+        more = "2026-01-05T08:10:00,1,S1,Avenida,10,-5,38,18,20,29.0\n2026-01-05T08:15:00,1,S1,Avenida,10,-5,37,17,20,28.0\n"
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                path = os.path.join(folder, "trafico.csv")
+                # Primera vez: todo el histórico.
+                self.assertEqual(self.city.history.update("traffic", path, id="S1"), 2)
+                self.assertNotIn("from", self.last()["query"])
+                # Sin filas nuevas: pide desde la última más un segundo y no añade nada.
+                self.assertEqual(self.city.history.update("traffic", path, id="S1"), 0)
+                self.assertEqual(self.last()["query"], {"from": "2026-01-05T08:05:01", "id": "S1"})
+                # Llegan dos filas nuevas: se añaden al final, sin cabecera repetida.
+                self.server.httpd.csv = TRAFFIC_CSV + more
+                self.assertEqual(self.city.history.update("traffic", path, id="S1"), 2)
+                with open(path, encoding="utf-8") as handle:
+                    text = handle.read()
+                self.assertEqual(text, TRAFFIC_CSV + more)
+                self.assertEqual(len(smartcity.parse_csv(text)), 4)
+                # Un fichero de otra cosa no se mezcla.
+                other = os.path.join(folder, "otro.csv")
+                with open(other, "w", encoding="utf-8") as handle:
+                    handle.write("a,b\n1,2\n")
+                with self.assertRaises(ValueError):
+                    self.city.history.update("traffic", other)
+                with self.assertRaises(ValueError):
+                    self.city.history.update("events", os.path.join(folder, "eventos.csv"))
+        finally:
+            self.server.httpd.csv = TRAFFIC_CSV
+
     def test_history_dataframe(self):
         try:
             import pandas  # noqa: F401

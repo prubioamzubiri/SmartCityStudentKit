@@ -13,7 +13,7 @@ STATE = {
     "sensors": [{"id": "S1", "name": "Avenida", "x": 10.0, "z": -5.0, "total": 400, "current": 3}],
     "pedestrianSensors": [{"id": "P1", "name": "Boulevard", "x": 0.0, "z": 0.0, "total": 90, "current": 7}],
     "parkings": [{"id": "U-1", "name": "Centro", "capacity": 300, "occupancy": 0.5, "tracked": False}],
-    "restrictions": [], "writeProtected": True, "paramsLocked": False,
+    "restrictions": [], "writeProtected": True, "seed": 1234, "startSeconds": 25200,
 }
 BUSES = {"lines": [
     {"id": "L1", "fleet": 6, "minFleet": 1, "maxFleet": 30, "capacity": 80, "active": 4, "passengers": 160,
@@ -24,6 +24,9 @@ BUSES = {"lines": [
 TRAFFIC_CSV = ("timestamp,weekday,sensor_id,sensor_name,x,z,count,count_fwd,count_bwd,avg_speed_kmh\n"
                "2026-01-05T08:00:00,1,S1,Avenida,10,-5,42,20,22,31.5\n"
                "2026-01-05T08:05:00,1,S1,Avenida,10,-5,40,19,21,\n")
+WEATHER_CSV = ("time,temperature_c,rain_mm_h,cloud_pct,condition\n"
+               "2026-01-05T07:00:00,8.5,0,40,cloudy\n"
+               "2026-01-05T08:00:00,9.1,0.4,80,rain\n")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -94,9 +97,15 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(("/api/sensors/", "/api/pedestrian-sensors/")):
             return self._send(200, {"ok": True})
         if method == "PUT" and path == "/api/params":
-            return self._send(403, {"error": "Los parámetros de demanda están bloqueados en este servidor"})
+            return self._send(403, {"error": "La demanda la fija el servidor y varía un poco cada día: no se puede cambiar"})
         if method == "GET" and path.endswith(".csv"):
-            return self._send(200, TRAFFIC_CSV, "text/csv; charset=utf-8")
+            # Como el servidor real: `from` incluido y `to` excluido (comparando la hora como texto ISO).
+            source = WEATHER_CSV if path == "/api/weather.csv" else self.server.csv
+            header, *rows = source.splitlines(keepends=True)
+            column = 0
+            rows = [r for r in rows if (not query.get("from") or r.split(",")[column] >= query["from"])
+                    and (not query.get("to") or r.split(",")[column] < query["to"])]
+            return self._send(200, header + "".join(rows), "text/csv; charset=utf-8")
         if method == "GET" and path == "/api/events":
             return self._send(200, {"events": [{"id": "E1"}]})
         if method == "GET" and path == "/api/holidays":
@@ -112,6 +121,7 @@ class FakeServer:
     def __enter__(self):
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.calls = []
+        self.httpd.csv = TRAFFIC_CSV
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
         return self

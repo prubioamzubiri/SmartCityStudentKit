@@ -34,5 +34,21 @@ class GestorTest(unittest.TestCase):
             self.assertEqual(created["body"]["radius"], 200)
 
 
+
+class RecogerTest(unittest.TestCase):
+    def test_second_run_only_asks_for_new_rows(self):
+        import tempfile
+        recoger = load("recoger")
+        with FakeServer() as server, tempfile.TemporaryDirectory() as folder:
+            city = SmartCity(server.url)
+            first = recoger.recoger(city, folder)
+            self.assertEqual(first["trafico_S1.csv"], 2)
+            self.assertIn("peatones_P1.csv", first)
+            second = recoger.recoger(city, folder)
+            self.assertEqual(set(second.values()), {0})
+            asked = [c["query"] for c in server.calls if c["path"] == "/api/traffic.csv"]
+            self.assertEqual(asked[-1], {"from": "2026-01-05T08:05:01", "id": "S1"})
+
+
 if __name__ == "__main__":
     unittest.main()

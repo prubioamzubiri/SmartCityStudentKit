@@ -26,7 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .constants import DEFAULT_SCALE, HISTORIES, RestrictionMode
+from .constants import DEFAULT_SCALE, HISTORIES, TIME_COLUMNS, RestrictionMode
 from .errors import SmartCityConnectionError, SmartCityError, error_for_status
 
 __all__ = ["SmartCity"]
@@ -85,6 +85,29 @@ def parse_csv(text, convert=True):
 def parse_sim_time(value):
     """``"2026-01-05T08:30:00"`` -> ``datetime`` (sin zona horaria: es la hora simulada)."""
     return _dt.datetime.fromisoformat(value)
+
+
+def _csv_tail(path):
+    """Cabecera y última fila no vacía de un CSV (``(None, None)`` si no existe o está vacío)."""
+    try:
+        with open(path, "rb") as handle:
+            header = handle.readline().decode("utf-8")
+            if not header.strip():
+                return None, None
+            handle.seek(0, 2)
+            size = handle.tell()
+            chunk = 4096
+            while True:
+                start = max(0, size - chunk)
+                handle.seek(start)
+                lines = [line for line in handle.read(size - start).split(b"\n") if line.strip()]
+                if start == 0 or len(lines) >= 2:
+                    break
+                chunk *= 4
+    except FileNotFoundError:
+        return None, None
+    last = lines[-1].decode("utf-8") if lines else None
+    return header, (None if last is None or last.strip() == header.strip() else last)
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -223,7 +246,9 @@ class SmartCity:
     # -- parámetros globales --------------------------------------------------------------------------------------------
 
     def set_params(self, max_cars=None, max_pedestrians=None, scenario=None):
-        """Cambia la demanda (``PUT /api/params``). Lanza :class:`ForbiddenError` si el servidor la bloquea."""
+        """``PUT /api/params``. **Ya no se puede usar**: la demanda la fija el servidor (y varía un poco cada día), así
+        que el servidor siempre responde con :class:`ForbiddenError`. Se mantiene solo por compatibilidad; la demanda
+        actual está en ``state()["params"]``."""
         body = {k: v for k, v in {"maxCars": max_cars, "maxPedestrians": max_pedestrians, "scenario": scenario}.items()
                 if v is not None}
         return self._write("PUT", "/api/params", body)
@@ -496,6 +521,71 @@ class History(_Resource):
         with open(path, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
         return path
+
+    def update(self, kind, path, start=None, **params):
+        """Descarga incremental: añade a ``path`` solo las filas nuevas desde la última que ya tiene.
+
+        Si ``path`` no existe (o está vacío), lo crea con todo el histórico desde ``start`` (o desde el principio). Si ya
+        existe, pide al servidor desde la última hora del fichero más un segundo (``from`` es inclusivo) y añade al
+        final las filas nuevas, sin repetir la cabecera. Devuelve el número de filas añadidas.
+
+        Usa un fichero distinto para cada combinación de filtros (p. ej. ``id=S1``): el fichero no los recuerda.
+        No vale para ``events`` (la asistencia de un evento se publica cuando termina, así que sus filas cambian).
+        """
+        if kind not in HISTORIES:
+            raise ValueError(f"kind debe ser uno de: {', '.join(HISTORIES)}")
+        if kind == "events":
+            raise ValueError("events no admite descarga incremental: usa history.download('events', ...)")
+        column = TIME_COLUMNS.get(kind, "timestamp")
+        header, last = _csv_tail(path)
+        if header is None:
+            text = self._weather_since(start, params) if kind == "weather" else self.csv(kind, start, None, **params)
+            lines = text.splitlines(keepends=True)
+            with open(path, "w", encoding="utf-8", newline="") as handle:
+                handle.writelines(lines)
+            return max(0, len(lines) - 1)
+        names = next(csv.reader([header]))
+        if column not in names:
+            raise ValueError(f"{path} no parece un CSV de {kind}: le falta la columna {column}")
+        if last is None:
+            since = start
+        else:
+            stamp = next(csv.reader([last]))[names.index(column)]
+            since = parse_sim_time(stamp) + _dt.timedelta(seconds=1)
+        text = self._weather_since(since, params) if kind == "weather" else self.csv(kind, since, None, **params)
+        lines = text.splitlines(keepends=True)
+        if not lines:
+            return 0
+        if lines[0].strip() != header.strip():
+            raise ValueError(f"Las columnas de {path} no coinciden con las del servidor: descárgalo de nuevo")
+        rows = lines[1:]
+        if rows:
+            with open(path, "rb") as handle:
+                handle.seek(-1, 2)
+                missing_newline = handle.read(1) != b"\n"
+            with open(path, "a", encoding="utf-8", newline="") as handle:
+                if missing_newline:
+                    handle.write("\n")
+                handle.writelines(rows)
+        return len(rows)
+
+    def _weather_since(self, start, params):
+        """El tiempo admite como mucho 366 días por petición: pide los tramos que hagan falta hasta ahora."""
+        if start is None:
+            return self.csv("weather", None, None, **params)
+        begin = start if isinstance(start, _dt.datetime) else parse_sim_time(_time(start))
+        if begin.tzinfo is not None:
+            begin = begin.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+        now = self._city.sim_time()
+        out = []
+        while True:
+            end = begin + _dt.timedelta(days=360)
+            final = end > now
+            lines = self.csv("weather", begin, None if final else end, **params).splitlines(keepends=True)
+            out.extend(lines if not out else lines[1:])
+            if final:
+                return "".join(out)
+            begin = end
 
     def traffic(self, start=None, end=None, sensor_id=None, **kwargs):
         """Coches por sensor cada 5 min: ``count``, ``count_fwd``, ``count_bwd``, ``avg_speed_kmh``."""
