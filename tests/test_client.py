@@ -39,6 +39,11 @@ class ClientTest(unittest.TestCase):
         self.assertAlmostEqual(self.city.scale(), 52.1)
         self.assertEqual(self.city.docs(), "# API")
 
+    def test_wait_until_returns_once_the_simulated_time_is_reached(self):
+        now = self.city.wait_until("2026-01-05T08:00")  # ya pasó: vuelve enseguida
+        self.assertEqual(now, dt.datetime(2026, 1, 5, 8, 30))
+        self.assertEqual(self.last()["path"], "/api/state")
+
     def test_point_accepts_xz_or_latlon(self):
         self.city.point(lat=43.3166, lon=-1.98, radius=200)
         self.assertEqual(self.last()["query"], {"lat": "43.3166", "lon": "-1.98", "radius": "200"})
