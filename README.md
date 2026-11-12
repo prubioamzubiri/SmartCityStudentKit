@@ -9,6 +9,9 @@ históricos y actuar sobre ella (cortar calles, cambiar semáforos, mover autobu
 - Las respuestas son los mismos `dict` / `list` que devuelve el servidor; los errores son excepciones con el mensaje
   del servidor.
 
+> **¿Dónde probar?** La ciudad de vuestro grupo puntúa. Para explorar, entrenar y romper cosas, levantad vuestra
+> propia ciudad acelerada: [Tu ciudad de pruebas](docs/ciudad-de-pruebas.md).
+
 ## Instalación
 
 ```bash
@@ -58,6 +61,7 @@ latlon_to_xz(43.3166, -1.98)    # (97.19, 187.98)
 city.sim_time()          # datetime de la hora simulada
 city.scale()             # 52.1
 city.sleep_sim(minutes=15)   # espera ≈ 17 s reales
+city.wait_until("2026-01-06T08:00")   # espera a esa hora simulada (aunque la ciudad vaya por detrás)
 ```
 
 ### Tu ciudad
@@ -80,7 +84,7 @@ Algunos detalles del simulador que importan al gestionar:
 
 | Qué | Métodos |
 | --- | --- |
-| Estado general | `city.state()`, `city.health()`, `city.sim_time()`, `city.scale()`, `city.docs()` |
+| Estado general | `city.state()`, `city.health()`, `city.sim_time()`, `city.scale()`, `city.sleep_sim(...)`, `city.wait_until(hora)`, `city.docs()` |
 | Cerca de un punto | `city.point(...)`, `city.roads(..., radius, limit)`, `city.road(way)` |
 | Entorno | `city.weather(hours)`, `city.events(start, end, type)`, `city.holidays(start, end)` |
 | Posiciones | `city.cars()`, `city.pedestrians()` |

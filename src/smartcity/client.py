@@ -205,6 +205,19 @@ class SmartCity:
         total = seconds + 60 * minutes + 3600 * hours
         time.sleep(max(0.0, total / (scale or self.scale())))
 
+    def wait_until(self, when, poll=1.0):
+        """Espera hasta que la hora **simulada** llegue a ``when`` (``datetime`` o texto ISO) y devuelve la hora simulada.
+
+        A diferencia de :meth:`sleep_sim`, no supone que la ciudad va a su ritmo: si va por detrás (una ciudad de
+        pruebas muy acelerada en un equipo lento), espera lo que haga falta.
+        """
+        target = parse_sim_time(when) if isinstance(when, str) else when
+        while True:
+            now = self.sim_time()
+            if now >= target:
+                return now
+            time.sleep(min(poll, max(0.05, (target - now).total_seconds() / self.scale())))
+
     def docs(self):
         """Guía de la API en Markdown (``GET /api/docs.md``)."""
         return self.request("GET", "/api/docs.md", raw=True)
