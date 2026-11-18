@@ -37,11 +37,15 @@ class NotFoundError(SmartCityError):
     """404: el recurso (sensor, semáforo, calle, línea, restricción...) no existe."""
 
 
+class ConflictError(SmartCityError):
+    """409: no se puede ahora (no quedan autobuses en la reserva, no hay ninguna furgoneta libre...)."""
+
+
 class PayloadTooLargeError(SmartCityError):
     """413: el cuerpo de la petición supera 64 KB."""
 
 
-_BY_STATUS = {400: ValidationError, 401: AuthError, 403: ForbiddenError, 404: NotFoundError,
+_BY_STATUS = {400: ValidationError, 401: AuthError, 403: ForbiddenError, 404: NotFoundError, 409: ConflictError,
               413: PayloadTooLargeError, 422: ValidationError}
 
 
