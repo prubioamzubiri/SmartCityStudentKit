@@ -42,6 +42,27 @@ def manage_buses(city, log):
             log.append(f"{line['id']}: {target} -> {target - 1} autobuses (ocupación {occupancy:.0%})")
 
 
+def manage_bikes(city, log):
+    """Si hay una furgoneta libre, lleva bicis del puesto más lleno al más vacío.
+
+    Es reactiva: cuando ve el puesto vacío ya llega tarde (un viaje tarda media hora o más). Mejor prever con el
+    histórico qué puestos se vaciarán con la marea de los laborables y mover las bicis antes.
+    """
+    if not city.bikes.free_vans():
+        return
+    stations = [s for s in city.bikes.stations() if s["capacity"] > 0]
+    fullest = max(stations, key=lambda s: s["available"] / s["capacity"])
+    emptiest = min(stations, key=lambda s: s["available"] / s["capacity"])
+    if fullest["available"] / fullest["capacity"] < 0.8 or emptiest["available"] / emptiest["capacity"] > 0.2:
+        return  # nada urgente
+    bikes = min(20, fullest["available"] // 2, emptiest["capacity"] - emptiest["available"])
+    if bikes < 1:
+        return
+    minutes = city.bikes.trip_minutes(fullest["id"], emptiest["id"])
+    city.bikes.move(fullest["id"], emptiest["id"], bikes)
+    log.append(f"Furgoneta: {bikes} bicis de {fullest['name']} a {emptiest['name']} (llegan en {minutes:.0f} min)")
+
+
 def manage_zone(city, log, zone):
     """Si el punto vigilado se atasca, cierra el acceso a coches nuevos; si se despeja, lo reabre."""
     cars = city.point(**WATCH)["cars"]
@@ -64,6 +85,7 @@ def main():
         try:
             state = city.state()
             manage_buses(city, log)
+            manage_bikes(city, log)
             zone = manage_zone(city, log, zone)
             print(f"[{state['simTime']}] {state['cars']} coches, {state['traffic']['avgKmh']} km/h de media")
         except SmartCityError as err:

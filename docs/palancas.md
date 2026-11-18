@@ -29,7 +29,7 @@ el de referencia; las reglas absurdas (todo apagado, todo cortado, todo caro) pu
 | **Autobuses** por línea | `city.buses.set_fleet("L1", 12)` | Quitar: al instante. **Añadir: 40 min** (`pending`) | Qué líneas se llenarán dentro de una hora: hora punta, lluvia, eventos cerca de su recorrido (`buses.route("L1")`) |
 | **Calles cortadas** y zonas con límite de entrada | `city.restrictions...` | Al instante | Cuándo y dónde compensa: un evento, un sábado de sol en el centro |
 | **Tarifa de cada parking** (precio y franjas horarias) | `city.parkings.set_tariff(id, 3, [{"from": "17:00", "to": "22:00", "price": 5}])` | **A las 0:00 del día siguiente** | Qué parkings se llenarán mañana: eventos, fin de semana, tiempo |
-| **Furgonetas de bicis** (3, de 20 bicis) | `city.bikes.move(origen, destino, 15)` | **Media hora o más** por viaje (15 min cargar, 15 descargar y el trayecto) | Qué puestos se vaciarán o llenarán (cada laborable: por la mañana se vacían los barrios y se llena el centro; por la tarde, al revés) |
+| **Furgonetas de bicis** (3, de 20 bicis) | `city.bikes.move(origen, destino, 15)` (o pestaña Bicis del visor) | **Media hora o más** por viaje (15 min cargar, 15 descargar y el trayecto) | Qué puestos se vaciarán o llenarán (cada laborable: por la mañana se vacían los barrios y se llena el centro; por la tarde, al revés) |
 | **Anclajes de un puesto de bicis** | `city.bikes.set_capacity({...})` | **30 días** | Dónde faltan o sobran anclajes a la larga |
 
 ### Semáforos
@@ -74,7 +74,18 @@ el de referencia; las reglas absurdas (todo apagado, todo cortado, todo caro) pu
 
 - Los laborables hay **marea**: por la mañana (7–10 h) se cogen bicis en los barrios y se dejan en el centro; por la
   tarde (17–20 h), al revés.
-- Una furgoneta tarda: si esperáis a que un puesto esté vacío, llegáis tarde. Movedlas antes.
+- Lo que hace que se cojan más o menos bicis: la hora y el día, el **tiempo** (con lluvia casi nadie; con sol y buena
+  temperatura, más) y los parkings caros (parte de la gente deja el coche y coge la bici).
+- Un puesto **vacío** o **lleno** es un mal servicio: quien quería coger o dejar una bici no puede.
+- **Furgonetas** (`city.bikes.move(origen, destino, bicis)`, o la pestaña Bicis del visor, que las dibuja en el mapa):
+  - Hay 3, de 20 bicis. Va la **libre más cercana** al origen (`free_vans()`; si no hay ninguna, `ConflictError`).
+  - Carga las bicis que haya en el origen (como mucho las pedidas) y descarga en el destino las que quepan; las que no
+    caben vuelven a circular.
+  - Van en **línea recta a unos 14 km/h** (no siguen las calles ni les afecta el tráfico) y tardan **15 min en cargar
+    y otros 15 en descargar**. `city.bikes.trip_minutes(origen, destino)` calcula cuánto tardaría ahora.
+  - Mientras trabaja, `vans()` dice qué hace cada una (`job`: `loaded` es `None` hasta que carga, y las horas
+    `loadAt` y `unloadAt`).
+  - Si esperáis a que un puesto esté vacío, llegáis tarde: movedlas **antes**, con lo que preveáis de la marea.
 
 ## Lo que no se puede cambiar
 

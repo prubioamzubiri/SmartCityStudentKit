@@ -105,6 +105,9 @@ class ClientTest(unittest.TestCase):
         self.city.bikes.set_capacity({"municipal/0": 20, "municipal/5": None})
         self.assertEqual(self.last()["body"], {"changes": {"municipal/0": 20, "municipal/5": None}})
         self.assertEqual(self.city.bikes.vans()[0]["id"], "F1")
+        self.assertEqual([v["id"] for v in self.city.bikes.free_vans()], ["F1"])
+        # F1 está en el origen: 2.400 m a 4 m/s (10 min) + 15 min cargando + 15 descargando.
+        self.assertAlmostEqual(self.city.bikes.trip_minutes("municipal/0", "municipal/5"), 40)
         moved = self.city.bikes.move("municipal/0", "municipal/5", 12)
         self.assertEqual((moved["van"], self.last()["body"]), ("F1", {"from": "municipal/0", "to": "municipal/5", "bikes": 12}))
         with self.assertRaises(ConflictError):

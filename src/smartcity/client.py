@@ -20,6 +20,7 @@ import csv
 import datetime as _dt
 import io
 import json
+import math
 import os
 import time
 import urllib.error
@@ -404,15 +405,40 @@ class Bikes(_Resource):
     def stations(self):
         return self.state()["stations"]
 
+    # Furgonetas: van en línea recta a esta velocidad (m/s) y tardan esto en cargar y en descargar (s simulados).
+    VAN_SPEED = 4
+    VAN_HANDLING = 900
+
     def vans(self):
-        """Furgonetas de redistribución: ``id``, ``x``, ``z``, ``busy`` y el trabajo en curso (``job``)."""
+        """Furgonetas de redistribución: ``id``, ``x``, ``z`` (donde está o de donde salió), ``busy`` y el trabajo en curso
+        (``job``: ``from``, ``to``, ``bikes``, ``loaded`` —``None`` hasta que carga— y las horas ``loadAt`` y ``unloadAt``)."""
         return self.state()["vans"]
+
+    def free_vans(self):
+        """Furgonetas libres ahora (si no hay ninguna, :meth:`move` lanza :class:`ConflictError`)."""
+        return [v for v in self.vans() if not v["busy"]]
+
+    def trip_minutes(self, from_id, to_id):
+        """Minutos simulados que tardaría ahora en descargar en ``to_id`` un movimiento desde ``from_id``, con la furgoneta
+        libre más cercana (``None`` si no hay ninguna libre). Sirve para decidir con cuánta antelación moverlas."""
+        state = self.state()
+        by_id = {s["id"]: s for s in state["stations"]}
+        a, b = by_id[from_id], by_id[to_id]
+        free = [v for v in state["vans"] if not v["busy"]]
+        if not free:
+            return None
+        to_origin = min(math.hypot(v["x"] - a["x"], v["z"] - a["z"]) for v in free)
+        trip = to_origin + math.hypot(a["x"] - b["x"], a["z"] - b["z"])
+        return (trip / self.VAN_SPEED + 2 * self.VAN_HANDLING) / 60
 
     def move(self, from_id, to_id, bikes):
         """Encarga a una furgoneta (hay 3, de 20 bicis) mover hasta ``bikes`` bicis de un puesto a otro.
 
-        La libre más cercana va al origen, carga, va al destino y descarga: **tarda** (media hora o más: 15 min cargar, 15 descargar y el trayecto). Devuelve la furgoneta
-        y las horas de carga y descarga; :class:`ConflictError` si no hay ninguna libre.
+        La libre más cercana va al origen, carga las que haya (como mucho ``bikes``), va al destino y descarga las que
+        quepan (las que no caben vuelven a circular). Va en línea recta a unos 14 km/h, sin calles ni tráfico, y tarda
+        15 min en cargar y otros 15 en descargar: **media hora o más** (:meth:`trip_minutes`). Devuelve la furgoneta
+        y las horas de carga y descarga (``loadAt``, ``unloadAt``); :class:`ConflictError` si no hay ninguna libre.
+        También se pueden enviar desde el visor (pestaña Bicis → Furgonetas).
         """
         return self._city._write("POST", "/api/bikes/moves", {"from": from_id, "to": to_id, "bikes": int(bikes)})
 

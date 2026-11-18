@@ -90,8 +90,13 @@ class Handler(BaseHTTPRequestHandler):
         if method == "PUT" and path.endswith("/tracked"):
             return self._send(200, {"tracked": body["ids"]})
         if method == "GET" and path == "/api/bikes":
-            return self._send(200, {"inUse": 5, "moved": 0, "stations": [{"id": "municipal/0", "available": 4, "capacity": 10}],
-                                    "vans": [{"id": "F1", "x": 0, "z": 0, "busy": False, "job": None}]})
+            return self._send(200, {"inUse": 5, "moved": 0,
+                                    "stations": [{"id": "municipal/0", "x": 0, "z": 0, "available": 4, "capacity": 10},
+                                                 {"id": "municipal/5", "x": 2400, "z": 0, "available": 9, "capacity": 10}],
+                                    "vans": [{"id": "F1", "x": 0, "z": 0, "busy": False, "job": None},
+                                             {"id": "F2", "x": 0, "z": 0, "busy": True,
+                                              "job": {"from": "municipal/5", "to": "municipal/0", "bikes": 5, "loaded": None,
+                                                      "loadAt": "2026-01-05T08:50:00", "unloadAt": "2026-01-05T09:20:00"}}]})
         if method == "PUT" and path == "/api/bikes/capacity":
             return self._send(200, {"inUse": 5, "stations": []})
         if method == "GET" and path == "/api/signals":

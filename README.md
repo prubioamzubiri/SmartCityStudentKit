@@ -85,7 +85,9 @@ Algunos detalles del simulador que importan al gestionar:
 - Los **autobuses** que se añaden a una línea tardan **40 min** en entrar en servicio (van en `pending`; `target` los
   cuenta). La flota total es fija y las horas de más sobre la flota inicial son sobrecoste.
 - La **tarifa de un parking** solo cambia a las 0:00: se programa la de mañana.
-- Las **furgonetas de bicis** tardan media hora o más por viaje (cargar, descargar y el trayecto).
+- Las **furgonetas de bicis** (3, de 20 bicis) tardan media hora o más por viaje: 15 min en cargar, 15 en descargar y
+  el trayecto, en línea recta a unos 14 km/h (`bikes.trip_minutes(origen, destino)` lo calcula). También se envían
+  desde el visor (pestaña Bicis → Furgonetas), que las dibuja en el mapa.
 - Los coches eligen ruta con el tráfico de ahora (evitan los atascos) y van a los lugares con actividad: zonas de
   trabajo por la mañana de los laborables; centro, Parte Vieja y playas en el tiempo libre.
 
@@ -98,7 +100,7 @@ Algunos detalles del simulador que importan al gestionar:
 | Entorno | `city.weather(hours)`, `city.events(start, end, type)`, `city.holidays(start, end)` |
 | Posiciones | `city.cars()`, `city.pedestrians()` |
 | Autobuses | `city.buses.list()`, `.status()`, `.get("L1")`, `.route("L1")`, `.occupancy(line)`, `.set_fleet("L1", 12)`, `.track([...])`, `.history(...)` |
-| Bicicletas | `city.bikes.state()`, `.stations()`, `.vans()`, `.move(origen, destino, bicis)`, `.set_capacity({"municipal/0": 20})`, `.track([...])`, `.history(...)` |
+| Bicicletas | `city.bikes.state()`, `.stations()`, `.vans()`, `.free_vans()`, `.trip_minutes(origen, destino)`, `.move(origen, destino, bicis)`, `.set_capacity({"municipal/0": 20})`, `.track([...])`, `.history(...)` |
 | Parkings | `city.parkings.list()`, `.set_tariff(id, precio, franjas)`, `.track([...])`, `.history(...)` |
 | Sensores de coches | `city.sensors.list()`, `.create(lat=, lon=, name=)`, `.rename(id, name)`, `.delete(id)`, `.history(...)` |
 | Sensores de peatones | `city.pedestrian_sensors.…` (los mismos métodos) |
@@ -164,7 +166,9 @@ city.buses.route("L1")["stops"]               # paradas con x, z: qué líneas p
 city.parkings.set_tariff("U-125_53", 2, [{"from": "17:00", "to": "22:00", "price": 5}])
 
 # Una furgoneta lleva 15 bicis de un puesto a otro (tarda media hora o más).
-city.bikes.move("municipal/3", "municipal/17", 15)
+if city.bikes.free_vans():
+    print(f"Llegarán en {city.bikes.trip_minutes('municipal/3', 'municipal/17'):.0f} min simulados")
+    city.bikes.move("municipal/3", "municipal/17", 15)
 ```
 
 ### Históricos
