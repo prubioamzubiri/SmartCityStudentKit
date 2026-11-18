@@ -15,11 +15,12 @@ STATE = {
     "parkings": [{"id": "U-1", "name": "Centro", "capacity": 300, "occupancy": 0.5, "tracked": False}],
     "restrictions": [], "writeProtected": True, "seed": 1234, "startSeconds": 25200,
 }
-BUSES = {"lines": [
-    {"id": "L1", "fleet": 6, "minFleet": 1, "maxFleet": 30, "capacity": 80, "active": 4, "passengers": 160,
-     "full": 0, "waiting": 12, "suspended": False, "tracked": False},
-    {"id": "L2", "fleet": 3, "minFleet": 1, "maxFleet": 30, "capacity": 80, "active": 0, "passengers": 0,
-     "full": 0, "waiting": 0, "suspended": True, "tracked": False},
+BUSES = {"fleetTotal": 10, "reserve": 1, "deployMinutes": 40,
+         "today": {"busHours": 40.5, "includedHours": 40.5, "overtimeHours": 0}, "lines": [
+    {"id": "L1", "fleet": 6, "target": 6, "pending": [], "minFleet": 1, "maxFleet": 30, "capacity": 80, "active": 4,
+     "passengers": 160, "full": 0, "waiting": 12, "leftBehind": 0, "unserved": 0, "suspended": False, "tracked": False},
+    {"id": "L2", "fleet": 3, "target": 3, "pending": [], "minFleet": 1, "maxFleet": 30, "capacity": 80, "active": 0,
+     "passengers": 0, "full": 0, "waiting": 0, "leftBehind": 0, "unserved": 0, "suspended": True, "tracked": False},
 ]}
 TRAFFIC_CSV = ("timestamp,weekday,sensor_id,sensor_name,x,z,count,count_fwd,count_bwd,avg_speed_kmh\n"
                "2026-01-05T08:00:00,1,S1,Avenida,10,-5,42,20,22,31.5\n"
@@ -70,6 +71,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"way": 2325, "class": "primary"})
         if method == "GET" and path == "/api/buses":
             return self._send(200, BUSES)
+        if method == "GET" and path == "/api/buses/L1":
+            return self._send(200, {**BUSES["lines"][0], "stops": [{"index": 0, "x": 0, "z": 0, "turnaround": False}]})
+        if method == "POST" and path == "/api/bikes/moves":
+            if body.get("from") == body.get("to"):
+                return self._send(400, {"error": "El origen y el destino deben ser distintos"})
+            if body.get("from") == "ocupadas":
+                return self._send(409, {"error": "No hay furgonetas libres"})
+            return self._send(201, {"van": "F1", **body, "loadAt": "2026-01-05T08:50:00", "unloadAt": "2026-01-05T09:20:00"})
+        if method == "PATCH" and path.startswith("/api/parking/"):
+            return self._send(200, {"id": urllib.parse.unquote(path.rsplit("/", 1)[1]), "today": {"price": 2, "schedule": []},
+                                    "tomorrow": {"price": body["price"] or 2, "schedule": body.get("schedule", [])},
+                                    "effectiveAt": "2026-01-06T00:00:00"})
         if method == "PATCH" and path.startswith("/api/buses/"):
             if path != "/api/buses/L1":
                 return self._send(404, {"error": "Línea no encontrada"})
@@ -77,7 +90,8 @@ class Handler(BaseHTTPRequestHandler):
         if method == "PUT" and path.endswith("/tracked"):
             return self._send(200, {"tracked": body["ids"]})
         if method == "GET" and path == "/api/bikes":
-            return self._send(200, {"inUse": 5, "stations": [{"id": "municipal/0", "available": 4, "capacity": 10}]})
+            return self._send(200, {"inUse": 5, "moved": 0, "stations": [{"id": "municipal/0", "available": 4, "capacity": 10}],
+                                    "vans": [{"id": "F1", "x": 0, "z": 0, "busy": False, "job": None}]})
         if method == "PUT" and path == "/api/bikes/capacity":
             return self._send(200, {"inUse": 5, "stations": []})
         if method == "GET" and path == "/api/signals":

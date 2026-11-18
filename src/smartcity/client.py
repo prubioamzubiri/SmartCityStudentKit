@@ -312,8 +312,22 @@ class Parkings(_Resource):
     """Parkings subterráneos (``city.parkings``)."""
 
     def list(self):
-        """Parkings con ``capacity``, ``occupancy`` (0–1) y ``tracked``."""
+        """Parkings con ``capacity``, ``occupancy`` (0–1), ``tracked``, ``price`` (€/h ahora) y sus tarifas ``today`` y
+        ``tomorrow`` (la programada para mañana, o ``None``)."""
         return self._city.state()["parkings"]
+
+    def set_tariff(self, parking_id, price=None, schedule=None):
+        """Programa la **tarifa de mañana** de un parking: se aplica a las 0:00 y sigue hasta que se cambie.
+
+        ``price`` en €/h (0,5–6; ``None`` = la de por defecto) y, opcionalmente, ``schedule``: hasta 4 franjas con otro
+        precio, p. ej. ``[{"from": "17:00", "to": "22:00", "price": 5}]``. La gente elige entre los parkings de su zona
+        según el precio; con los parkings caros, parte deja el coche (y los que van a un evento miran los de alrededor de
+        la sede). Devuelve ``today``, ``tomorrow`` y ``effectiveAt``.
+        """
+        body = {"price": price}
+        if schedule:
+            body["schedule"] = [dict(band) for band in schedule]
+        return self._city._write("PATCH", f"/api/parking/{urllib.parse.quote(str(parking_id), safe='')}", body)
 
     def track(self, ids):
         """Graba la ocupación de estos parkings. **Sustituye** la lista anterior."""
@@ -330,9 +344,22 @@ class Parkings(_Resource):
 class Buses(_Resource):
     """Líneas de autobús (``city.buses``)."""
 
+    def status(self):
+        """Todo ``GET /api/buses``: ``lines``, ``fleetTotal``, ``reserve`` (autobuses sin asignar), ``deployMinutes`` (lo
+        que tarda en entrar en servicio uno que se añade) y ``today`` (horas de autobús del día: ``busHours``,
+        ``includedHours`` y ``overtimeHours``, las de más, que son sobrecoste)."""
+        return self._city.get("/api/buses")
+
     def list(self):
-        """Estado de cada línea: ``fleet``, ``active``, ``passengers``, ``waiting``, ``suspended``..."""
+        """Estado de cada línea: ``fleet`` (los que ya circulan), ``target`` (contando los que van de camino),
+        ``pending`` (``[{count, readyAt}]``), ``active``, ``passengers``, ``waiting``, ``leftBehind``, ``unserved``,
+        ``suspended``..."""
         return self._city.get("/api/buses")["lines"]
+
+    def route(self, line_id):
+        """Una línea con su recorrido: ``stops``, las paradas en orden con ``x`` y ``z`` (para saber qué líneas pasan
+        cerca de la sede de un evento)."""
+        return self._city.get(f"/api/buses/{line_id}")
 
     def get(self, line_id):
         for line in self.list():
@@ -347,7 +374,12 @@ class Buses(_Resource):
         return line.get("passengers", 0) / seats if seats else None
 
     def set_fleet(self, line_id, fleet):
-        """Fija el número de autobuses de la línea (entre ``minFleet`` y ``maxFleet``)."""
+        """Fija el número de autobuses de la línea (entre ``minFleet`` y ``maxFleet``).
+
+        Quitar es inmediato, pero los que se añaden (de la reserva o de otra línea) **tardan ``deployMinutes`` (40 min
+        simulados) en entrar en servicio**: van en ``pending``. Compara con ``target``, no con ``fleet``: pedir el
+        ``fleet`` actual cancela los que van de camino. La flota total es fija (409 si no quedan en la reserva).
+        """
         return self._city._write("PATCH", f"/api/buses/{line_id}", {"fleet": int(fleet)})
 
     def track(self, ids):
@@ -371,6 +403,18 @@ class Bikes(_Resource):
 
     def stations(self):
         return self.state()["stations"]
+
+    def vans(self):
+        """Furgonetas de redistribución: ``id``, ``x``, ``z``, ``busy`` y el trabajo en curso (``job``)."""
+        return self.state()["vans"]
+
+    def move(self, from_id, to_id, bikes):
+        """Encarga a una furgoneta (hay 3, de 20 bicis) mover hasta ``bikes`` bicis de un puesto a otro.
+
+        La libre más cercana va al origen, carga, va al destino y descarga: **tarda** (media hora o más: 15 min cargar, 15 descargar y el trayecto). Devuelve la furgoneta
+        y las horas de carga y descarga; :class:`ConflictError` si no hay ninguna libre.
+        """
+        return self._city._write("POST", "/api/bikes/moves", {"from": from_id, "to": to_id, "bikes": int(bikes)})
 
     def set_capacity(self, changes):
         """Cambia los anclajes (1–60) de varios puestos: ``{"municipal/0": 20, "municipal/5": None}``.
@@ -399,7 +443,11 @@ class Signals(_Resource):
     """Semáforos (``city.signals``)."""
 
     def list(self, all=False, x=None, z=None, lat=None, lon=None, radius=None):
-        """Semáforos con ciclo. ``all=True`` incluye los pasos de peatones; con punto y ``radius`` filtra por zona."""
+        """Semáforos con ciclo. ``all=True`` incluye los pasos de peatones; con punto y ``radius`` filtra por zona.
+
+        Los que funcionan traen sus **detectores**: ``approaching`` (coches a menos de 100 m) y ``queue`` (de esos, los
+        parados), por eje: ``{"ew": ..., "ns": ...}``.
+        """
         params = {"all": 1 if all else None}
         if radius is not None:
             params.update(radius=radius, **_point(x, z, lat, lon))
@@ -412,7 +460,7 @@ class Signals(_Resource):
                schedule=_UNSET):
         """Cambia los ajustes de un semáforo. Los campos no indicados se conservan; ``None`` quita un ajuste.
 
-        ``green_a`` = verde del eje este-oeste, ``green_b`` = norte-sur (5–180 s); ``yellow`` 1–10 s;
+        ``green_a`` = verde del eje este-oeste, ``green_b`` = norte-sur (5–180 s); ``yellow`` 3–6 s;
         ``mode`` en :class:`SignalMode`; ``schedule`` lista de reglas con horario.
         """
         values = locals()

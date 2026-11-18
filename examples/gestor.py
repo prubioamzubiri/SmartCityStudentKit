@@ -20,18 +20,26 @@ MIN_FLEET = 4
 
 
 def manage_buses(city, log):
-    """Más autobuses donde van llenos; menos donde van casi vacíos."""
-    for line in city.buses.list():
+    """Más autobuses donde van llenos; menos donde van casi vacíos.
+
+    Los que se añaden tardan 40 min simulados en entrar en servicio: por eso se compara con ``target`` (que cuenta los
+    que van de camino) y no con ``fleet``. Una regla así llega tarde a la hora punta: prever es mejor.
+    """
+    status = city.buses.status()
+    reserve = status["reserve"]
+    for line in status["lines"]:
         occupancy = city.buses.occupancy(line)
         if line["suspended"] or occupancy is None:
             continue  # recorrido cortado o sin servicio: cambiar la flota no ayuda
-        fleet = line["fleet"]
-        if occupancy > 0.75 and fleet < line["maxFleet"]:
-            city.buses.set_fleet(line["id"], fleet + 1)
-            log.append(f"{line['id']}: {fleet} -> {fleet + 1} autobuses (ocupación {occupancy:.0%})")
-        elif occupancy < 0.3 and fleet > MIN_FLEET:
-            city.buses.set_fleet(line["id"], fleet - 1)
-            log.append(f"{line['id']}: {fleet} -> {fleet - 1} autobuses (ocupación {occupancy:.0%})")
+        target = line["target"]
+        if occupancy > 0.75 and target < line["maxFleet"] and reserve > 0:
+            city.buses.set_fleet(line["id"], target + 1)
+            reserve -= 1
+            log.append(f"{line['id']}: {target} -> {target + 1} autobuses (ocupación {occupancy:.0%}; llega en 40 min)")
+        elif occupancy < 0.3 and target > MIN_FLEET and not line["pending"]:
+            city.buses.set_fleet(line["id"], target - 1)
+            reserve += 1
+            log.append(f"{line['id']}: {target} -> {target - 1} autobuses (ocupación {occupancy:.0%})")
 
 
 def manage_zone(city, log, zone):

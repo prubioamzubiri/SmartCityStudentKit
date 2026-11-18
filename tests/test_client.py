@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from fake_server import TOKEN, FakeServer  # noqa: E402
 
 import smartcity  # noqa: E402
-from smartcity import (AuthError, ForbiddenError, NotFoundError, RestrictionMode, SignalMode, SmartCity,  # noqa: E402
+from smartcity import (AuthError, ConflictError, ForbiddenError, NotFoundError, RestrictionMode, SignalMode, SmartCity,  # noqa: E402
                        SmartCityConnectionError, ValidationError)
 
 
@@ -81,6 +81,9 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(self.city.buses.track(["L1", "L2"]), ["L1", "L2"])
         with self.assertRaises(NotFoundError):
             self.city.buses.set_fleet("L9", 3)
+        self.assertEqual(self.city.buses.route("L1")["stops"][0]["index"], 0)
+        self.assertEqual(self.last()["path"], "/api/buses/L1")
+        self.assertIn("lines", self.city.buses.status())
 
     def test_sensors(self):
         self.assertEqual(self.city.sensors.list()[0]["id"], "S1")
@@ -101,6 +104,17 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(self.city.bikes.stations()[0]["id"], "municipal/0")
         self.city.bikes.set_capacity({"municipal/0": 20, "municipal/5": None})
         self.assertEqual(self.last()["body"], {"changes": {"municipal/0": 20, "municipal/5": None}})
+        self.assertEqual(self.city.bikes.vans()[0]["id"], "F1")
+        moved = self.city.bikes.move("municipal/0", "municipal/5", 12)
+        self.assertEqual((moved["van"], self.last()["body"]), ("F1", {"from": "municipal/0", "to": "municipal/5", "bikes": 12}))
+        with self.assertRaises(ConflictError):
+            self.city.bikes.move("ocupadas", "municipal/5", 3)
+        tariff = self.city.parkings.set_tariff("U-1", 3, [{"from": "17:00", "to": "22:00", "price": 5}])
+        self.assertEqual(self.last()["path"], "/api/parking/U-1")
+        self.assertEqual(self.last()["body"], {"price": 3, "schedule": [{"from": "17:00", "to": "22:00", "price": 5}]})
+        self.assertEqual(tariff["tomorrow"]["price"], 3)
+        self.city.parkings.set_tariff("U-1")
+        self.assertEqual(self.last()["body"], {"price": None})
 
     def test_signals(self):
         self.assertEqual(self.city.signals.list()[0]["mode"], "normal")
