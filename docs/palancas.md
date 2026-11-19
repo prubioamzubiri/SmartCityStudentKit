@@ -100,4 +100,8 @@ indirecta (cortes, parkings caros, autobuses que no dan abasto).
 - Previsión del tiempo: `city.weather(hours=48)`.
 - Recorridos de las líneas: `city.buses.route("L1")`.
 
+Ojo: rara vez un dato falta o es imposible (`-47` pasajeros, `15230` esperando), falta una fila o un sensor llega sin
+una coordenada, como con sensores reales. Limpiad los datos antes de entrenar y no decidáis con un dato absurdo (ver
+«Datos con fallos» en el README).
+
 Probad las ideas en una [ciudad de pruebas](ciudad-de-pruebas.md) antes de usarlas en la vuestra.

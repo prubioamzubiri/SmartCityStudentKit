@@ -74,6 +74,7 @@ class ClientTest(unittest.TestCase):
         lines = self.city.buses.list()
         self.assertEqual(self.city.buses.occupancy(lines[0]), 0.5)
         self.assertIsNone(self.city.buses.occupancy(lines[1]))
+        self.assertIsNone(self.city.buses.occupancy({**lines[0], "passengers": None}))  # dato que falta
         self.assertEqual(self.city.buses.get("L2")["suspended"], True)
         self.assertEqual(self.city.buses.set_fleet("L1", 8)["fleet"], 8)
         self.assertEqual(self.last(), {"method": "PATCH", "path": "/api/buses/L1", "query": {}, "body": {"fleet": 8},

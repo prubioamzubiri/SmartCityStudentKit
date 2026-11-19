@@ -207,6 +207,32 @@ Cada fila se graba cuando su intervalo termina, así que nunca llega una a media
 descarga incremental porque su asistencia se publica al terminar. Con la API directamente es lo mismo: pide
 `?from=` la última hora que tienes más un segundo (`from` es inclusivo).
 
+### Datos con fallos
+
+Como los sensores de una ciudad real, de vez en cuando (rara vez) los datos llegan mal, en los históricos y en la API
+en vivo:
+
+- un dato que **falta** (`None` en el kit, celda vacía en el CSV);
+- un dato **imposible**: negativo o disparatado (`-47` pasajeros, `15230` personas esperando, `-5` bicis);
+- una **fila que falta** (un hueco en la serie de un sensor);
+- un sensor **sin una de sus coordenadas** (`x` o `z` a `None`).
+
+La misma fila falla siempre igual aunque la vuelvas a descargar. Antes de entrenar un modelo o de decidir con un dato,
+compruébalo:
+
+```python
+import pandas as pd
+
+df = city.history.city(dataframe=True)
+df = df[(df["cars"] >= 0) & (df["cars"] < 10_000)]                  # fuera lo imposible
+df = df.set_index("timestamp").asfreq("5min").interpolate(limit=3)   # huecos cortos: interpolar
+
+line = city.buses.list()[0]
+occupancy = city.buses.occupancy(line)          # None si falta un dato
+if occupancy is None or not 0 <= occupancy <= 1.5:
+    ...  # dato dudoso: usa el anterior o la previsión, no decidas con él
+```
+
 ### Errores
 
 ```python

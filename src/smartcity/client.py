@@ -370,9 +370,13 @@ class Buses(_Resource):
 
     @staticmethod
     def occupancy(line):
-        """Ocupación de una línea (0–1): pasajeros / plazas en servicio. ``None`` si no hay autobuses en servicio."""
-        seats = (line.get("active") or 0) * (line.get("capacity") or 0)
-        return line.get("passengers", 0) / seats if seats else None
+        """Ocupación de una línea (0–1): pasajeros / plazas en servicio. ``None`` si no hay autobuses en servicio o si
+        falta un dato (los sensores fallan a veces; un dato imposible da una ocupación imposible: compruébala)."""
+        active, capacity, passengers = line.get("active"), line.get("capacity"), line.get("passengers")
+        if active is None or capacity is None or passengers is None:
+            return None
+        seats = active * capacity
+        return passengers / seats if seats else None
 
     def set_fleet(self, line_id, fleet):
         """Fija el número de autobuses de la línea (entre ``minFleet`` y ``maxFleet``).
