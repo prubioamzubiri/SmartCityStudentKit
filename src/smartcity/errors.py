@@ -37,11 +37,28 @@ class NotFoundError(SmartCityError):
     """404: el recurso (sensor, semáforo, calle, línea, restricción...) no existe."""
 
 
+class ConflictError(SmartCityError):
+    """409: no se puede ahora (no quedan autobuses en la reserva, no hay ninguna furgoneta libre, límite de sensores...)."""
+
+
+class DataGapError(SmartCityError):
+    """Los datos que faltan en un fichero ya no se pueden descargar: el servidor solo da el último año simulado.
+
+    Atributos: ``kind`` (tipo de histórico), ``since`` (desde dónde se pedían) y ``available_from`` (desde cuándo hay).
+    """
+
+    def __init__(self, message, kind=None, since=None, available_from=None):
+        super().__init__(message)
+        self.kind = kind
+        self.since = since
+        self.available_from = available_from
+
+
 class PayloadTooLargeError(SmartCityError):
     """413: el cuerpo de la petición supera 64 KB."""
 
 
-_BY_STATUS = {400: ValidationError, 401: AuthError, 403: ForbiddenError, 404: NotFoundError,
+_BY_STATUS = {400: ValidationError, 401: AuthError, 403: ForbiddenError, 404: NotFoundError, 409: ConflictError,
               413: PayloadTooLargeError, 422: ValidationError}
 
 

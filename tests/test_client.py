@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from fake_server import TOKEN, FakeServer  # noqa: E402
 
 import smartcity  # noqa: E402
-from smartcity import (AuthError, ForbiddenError, NotFoundError, RestrictionMode, SignalMode, SmartCity,  # noqa: E402
+from smartcity import (AuthError, ConflictError, ForbiddenError, NotFoundError, RestrictionMode, SignalMode, SmartCity,  # noqa: E402
                        SmartCityConnectionError, ValidationError)
 
 
@@ -25,6 +25,7 @@ class ClientTest(unittest.TestCase):
 
     def setUp(self):
         self.server.calls.clear()
+        self.server.httpd.sensors.clear()
         self.city = SmartCity(self.server.url, token=TOKEN)
 
     def last(self):
@@ -38,6 +39,11 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(self.city.sim_time(), dt.datetime(2026, 1, 5, 8, 30))
         self.assertAlmostEqual(self.city.scale(), 52.1)
         self.assertEqual(self.city.docs(), "# API")
+
+    def test_wait_until_returns_once_the_simulated_time_is_reached(self):
+        now = self.city.wait_until("2026-01-05T08:00")  # ya pasó: vuelve enseguida
+        self.assertEqual(now, dt.datetime(2026, 1, 5, 8, 30))
+        self.assertEqual(self.last()["path"], "/api/state")
 
     def test_point_accepts_xz_or_latlon(self):
         self.city.point(lat=43.3166, lon=-1.98, radius=200)
@@ -76,6 +82,9 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(self.city.buses.track(["L1", "L2"]), ["L1", "L2"])
         with self.assertRaises(NotFoundError):
             self.city.buses.set_fleet("L9", 3)
+        self.assertEqual(self.city.buses.route("L1")["stops"][0]["index"], 0)
+        self.assertEqual(self.last()["path"], "/api/buses/L1")
+        self.assertIn("lines", self.city.buses.status())
 
     def test_sensors(self):
         self.assertEqual(self.city.sensors.list()[0]["id"], "S1")
@@ -96,6 +105,20 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(self.city.bikes.stations()[0]["id"], "municipal/0")
         self.city.bikes.set_capacity({"municipal/0": 20, "municipal/5": None})
         self.assertEqual(self.last()["body"], {"changes": {"municipal/0": 20, "municipal/5": None}})
+        self.assertEqual(self.city.bikes.vans()[0]["id"], "F1")
+        self.assertEqual([v["id"] for v in self.city.bikes.free_vans()], ["F1"])
+        # F1 está en el origen: 2.400 m a 4 m/s (10 min) + 15 min cargando + 15 descargando.
+        self.assertAlmostEqual(self.city.bikes.trip_minutes("municipal/0", "municipal/5"), 40)
+        moved = self.city.bikes.move("municipal/0", "municipal/5", 12)
+        self.assertEqual((moved["van"], self.last()["body"]), ("F1", {"from": "municipal/0", "to": "municipal/5", "bikes": 12}))
+        with self.assertRaises(ConflictError):
+            self.city.bikes.move("ocupadas", "municipal/5", 3)
+        tariff = self.city.parkings.set_tariff("U-1", 3, [{"from": "17:00", "to": "22:00", "price": 5}])
+        self.assertEqual(self.last()["path"], "/api/parking/U-1")
+        self.assertEqual(self.last()["body"], {"price": 3, "schedule": [{"from": "17:00", "to": "22:00", "price": 5}]})
+        self.assertEqual(tariff["tomorrow"]["price"], 3)
+        self.city.parkings.set_tariff("U-1")
+        self.assertEqual(self.last()["body"], {"price": None})
 
     def test_signals(self):
         self.assertEqual(self.city.signals.list()[0]["mode"], "normal")
@@ -177,6 +200,65 @@ class ClientTest(unittest.TestCase):
                     self.city.history.update("events", os.path.join(folder, "eventos.csv"))
         finally:
             self.server.httpd.csv = TRAFFIC_CSV
+
+    def test_history_only_last_year_and_gaps(self):
+        self.assertEqual(self.city.limits()["maxSensors"], 2)
+        limits = self.server.httpd.limits
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                path = os.path.join(folder, "trafico.csv")
+                self.city.history.update("traffic", path, id="S1")  # filas hasta las 8:05 del 5 de enero
+                with open(path, encoding="utf-8") as handle:
+                    before = handle.read()
+                # Pasa más de un año sin descargar: lo que falta ya no está.
+                limits["downloadFrom"] = "2026-01-06T00:00:00"
+                with self.assertRaises(smartcity.DataGapError) as caught:
+                    self.city.history.update("traffic", path, id="S1")
+                self.assertEqual(caught.exception.available_from.isoformat(), "2026-01-06T00:00:00")
+                self.assertIn("último año simulado", str(caught.exception))
+                with open(path, encoding="utf-8") as handle:
+                    self.assertEqual(handle.read(), before, "con el error, el fichero no se toca")
+                # Con on_gap="skip": avisa y sigue desde lo más antiguo que queda.
+                with self.assertWarns(UserWarning):
+                    self.city.history.update("traffic", path, on_gap="skip", id="S1")
+                self.assertEqual(self.last()["query"], {"from": "2026-01-06T00:00:00", "id": "S1"})
+                with self.assertRaises(ValueError):
+                    self.city.history.update("traffic", path, on_gap="otro")
+                # Directamente con la API, un from antiguo es un 400 con la fecha.
+                with self.assertRaises(smartcity.ValidationError) as caught:
+                    self.city.history.traffic(start="2026-01-05")
+                self.assertIn("2026-01-06T00:00:00", caught.exception.message)
+        finally:
+            limits["downloadFrom"] = "2026-01-05T00:00:00"
+
+    def test_sensor_limit(self):
+        self.city.sensors.create(x=1, z=2)
+        self.city.sensors.create(x=1, z=2)
+        with self.assertRaises(smartcity.ConflictError) as caught:
+            self.city.sensors.create(x=1, z=2)
+        self.assertIn("Límite de sensores", caught.exception.message)
+
+    def test_chat(self):
+        chat = self.city.chat
+        self.assertEqual(chat.state(), {"enabled": False, "title": "Asistente"})
+        with self.assertRaises(smartcity.NotFoundError):
+            chat.ask("¿Hola?")
+        self.assertEqual(chat.test("¿Hola?"), "No sé")
+        self.assertEqual(chat.test("¿Hola?", provider="ollama", model="llama3.2"), "Hola")
+        self.assertEqual(self.last()["body"]["config"], {"provider": "ollama", "model": "llama3.2"})
+        try:
+            config = chat.configure(enabled=True, provider="custom", url="http://10.14.4.50:5000/chat", api_key="k", include_state=True)
+            self.assertEqual(self.last()["body"], {"enabled": True, "provider": "custom", "url": "http://10.14.4.50:5000/chat", "apiKey": "k", "includeState": True})
+            self.assertTrue(config["hasApiKey"])
+            self.assertNotIn("apiKey", chat.config())
+            self.assertEqual(chat.ask("¿Cómo va el tráfico?", history=[{"role": "user", "content": "Hola"}, {"role": "assistant", "content": "Hola"}]), "No sé")
+            self.assertEqual(len(self.last()["body"]["messages"]), 3)
+            self.assertEqual(chat.models(provider="ollama", url="http://ollama:11434"), ["llama3.2"])
+            self.assertEqual(chat.pull("llama3.2")["status"], "success")
+            with self.assertRaises(TypeError):
+                chat.configure(modelo="x")
+        finally:
+            self.server.httpd.chat.update({"enabled": False, "provider": "none"})
 
     def test_history_dataframe(self):
         try:

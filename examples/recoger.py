@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Recoge los históricos de la ciudad poco a poco en la carpeta ``datos/``: cada vez solo descarga lo nuevo.
 
+La ciudad solo da el último año simulado (una semana real): ejecútalo al menos una vez por semana, mejor cada día.
+Si a un fichero le falta algo que ya no se puede descargar, se avisa y se sigue (queda un hueco en ese fichero).
+
     SMARTCITY_URL=http://localhost:8080 python3 examples/recoger.py            # una vez
     SMARTCITY_URL=http://localhost:8080 python3 examples/recoger.py --cada 10  # cada 10 minutos reales
 """
 import argparse
 import os
 import time
+import warnings
 
 from smartcity import SmartCity, SmartCityError
 
@@ -19,17 +23,18 @@ def recoger(city, folder):
     os.makedirs(folder, exist_ok=True)
     added = {}
     for kind, name in FILES.items():
-        added[name] = city.history.update(kind, os.path.join(folder, name))
+        added[name] = city.history.update(kind, os.path.join(folder, name), on_gap="skip")
     # Un fichero por sensor, para poder borrar o añadir sensores sin mezclar sus datos.
     for prefix, kind, sensors in (("trafico", "traffic", city.sensors.list()),
                                   ("peatones", "pedestrians", city.pedestrian_sensors.list())):
         for sensor in sensors:
             name = f"{prefix}_{sensor['id']}.csv"
-            added[name] = city.history.update(kind, os.path.join(folder, name), id=sensor["id"])
+            added[name] = city.history.update(kind, os.path.join(folder, name), on_gap="skip", id=sensor["id"])
     return added
 
 
 def main():
+    warnings.simplefilter("always")  # que se vea cada hueco, aunque se repita
     parser = argparse.ArgumentParser()
     parser.add_argument("--carpeta", default="datos")
     parser.add_argument("--cada", type=float, default=0, help="minutos reales entre descargas (0 = solo una vez)")
