@@ -26,9 +26,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import warnings
 
 from .constants import DEFAULT_SCALE, HISTORIES, TIME_COLUMNS, RestrictionMode
-from .errors import SmartCityConnectionError, SmartCityError, error_for_status
+from .errors import DataGapError, SmartCityConnectionError, SmartCityError, error_for_status
 
 __all__ = ["SmartCity"]
 
@@ -136,13 +137,14 @@ class SmartCity:
         self.signals = Signals(self)
         self.restrictions = Restrictions(self)
         self.history = History(self)
+        self.chat = Chat(self)
 
     def __repr__(self):
         return f"SmartCity({self.url!r}, token={'***' if self.token else None})"
 
     # -- transporte ---------------------------------------------------------------------------------------------------
 
-    def request(self, method, path, params=None, body=None, raw=False):
+    def request(self, method, path, params=None, body=None, raw=False, timeout=None):
         """Petición genérica. Devuelve el JSON decodificado (o el texto si ``raw``).
 
         ``params`` se añade a la URL (se ignoran los ``None``); ``body`` se envía como JSON.
@@ -158,7 +160,7 @@ class SmartCity:
             headers["Authorization"] = f"Bearer {self.token}"
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as response:
                 payload = response.read().decode("utf-8")
         except urllib.error.HTTPError as err:
             text = err.read().decode("utf-8", "replace")
@@ -192,6 +194,17 @@ class SmartCity:
     def state(self):
         """Resumen de toda la ciudad (``GET /api/state``)."""
         return self.get("/api/state")
+
+    def limits(self):
+        """Límites de esta ciudad (``limits`` de ``/api/state``):
+
+        - ``downloadFrom``: hora simulada desde la que se pueden descargar los históricos (solo el último año simulado,
+          ``downloadDays``; lo anterior ya no se puede descargar: guardadlo a tiempo con :meth:`History.update`).
+        - ``maxSensors``: sensores de cada tipo (tráfico, peatones) que admite la ciudad.
+
+        Con un servidor antiguo, sin límites, devuelve ``{}``.
+        """
+        return self.state().get("limits") or {}
 
     def sim_time(self):
         """Hora simulada actual como ``datetime``."""
@@ -609,7 +622,7 @@ class History(_Resource):
             handle.write(text)
         return path
 
-    def update(self, kind, path, start=None, **params):
+    def update(self, kind, path, start=None, on_gap="error", **params):
         """Descarga incremental: añade a ``path`` solo las filas nuevas desde la última que ya tiene.
 
         Si ``path`` no existe (o está vacío), lo crea con todo el histórico desde ``start`` (o desde el principio). Si ya
@@ -618,7 +631,13 @@ class History(_Resource):
 
         Usa un fichero distinto para cada combinación de filtros (p. ej. ``id=S1``): el fichero no los recuerda.
         No vale para ``events`` (la asistencia de un evento se publica cuando termina, así que sus filas cambian).
+
+        El servidor solo da el **último año simulado** (una semana real): ejecútalo a menudo. Si lo que le falta al
+        fichero ya no se puede descargar, ``on_gap="error"`` (por defecto) lanza :class:`DataGapError` sin tocar el
+        fichero; ``on_gap="skip"`` avisa (``warnings``) y sigue desde lo más antiguo que queda, dejando el hueco.
         """
+        if on_gap not in ("error", "skip"):
+            raise ValueError('on_gap debe ser "error" o "skip"')
         if kind not in HISTORIES:
             raise ValueError(f"kind debe ser uno de: {', '.join(HISTORIES)}")
         if kind == "events":
@@ -626,6 +645,8 @@ class History(_Resource):
         column = TIME_COLUMNS.get(kind, "timestamp")
         header, last = _csv_tail(path)
         if header is None:
+            if kind != "weather":
+                start = self._within_window(kind, start, on_gap)
             text = self._weather_since(start, params) if kind == "weather" else self.csv(kind, start, None, **params)
             lines = text.splitlines(keepends=True)
             with open(path, "w", encoding="utf-8", newline="") as handle:
@@ -639,6 +660,8 @@ class History(_Resource):
         else:
             stamp = next(csv.reader([last]))[names.index(column)]
             since = parse_sim_time(stamp) + _dt.timedelta(seconds=1)
+        if kind != "weather":
+            since = self._within_window(kind, since, on_gap)
         text = self._weather_since(since, params) if kind == "weather" else self.csv(kind, since, None, **params)
         lines = text.splitlines(keepends=True)
         if not lines:
@@ -655,6 +678,24 @@ class History(_Resource):
                     handle.write("\n")
                 handle.writelines(rows)
         return len(rows)
+
+    def _within_window(self, kind, since, on_gap):
+        """``since`` si todavía se puede descargar; si no, error o (``on_gap="skip"``) lo más antiguo que queda."""
+        if since is None:
+            return None  # sin from, el servidor empieza en lo más antiguo que se puede descargar
+        available = self._city.limits().get("downloadFrom")
+        if not available:
+            return since
+        wanted = since if isinstance(since, _dt.datetime) else parse_sim_time(_time(since))
+        first = parse_sim_time(available)
+        if wanted >= first:
+            return since
+        message = (f"Faltan los datos de {kind} desde {wanted.isoformat()} y ya no se pueden descargar: la ciudad solo "
+                   f"da el último año simulado (desde {available}). Ejecuta history.update más a menudo.")
+        if on_gap == "skip":
+            warnings.warn(message + " Se sigue desde ahí y queda un hueco.", stacklevel=3)
+            return first
+        raise DataGapError(message, kind=kind, since=wanted, available_from=first)
 
     def _weather_since(self, start, params):
         """El tiempo admite como mucho 366 días por petición: pide los tramos que hagan falta hasta ahora."""
@@ -701,3 +742,78 @@ class History(_Resource):
 
     def events(self, start=None, end=None, type=None, **kwargs):
         return self.get("events", start, end, type=type, **kwargs)
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# Chatbot
+# --------------------------------------------------------------------------------------------------------------------
+
+_CHAT_FIELDS = {"enabled": "enabled", "title": "title", "provider": "provider", "url": "url", "model": "model",
+                "api_key": "apiKey", "system_prompt": "systemPrompt", "include_state": "includeState",
+                "temperature": "temperature", "max_tokens": "maxTokens", "timeout_seconds": "timeoutSeconds"}
+
+
+_CHAT_TIMEOUT = 620  # segundos: la ciudad espera al modelo hasta timeoutSeconds (como mucho 600)
+
+
+def _chat_config(fields):
+    unknown = set(fields) - set(_CHAT_FIELDS)
+    if unknown:
+        raise TypeError(f"Campos desconocidos: {', '.join(sorted(unknown))} (valen: {', '.join(_CHAT_FIELDS)})")
+    return {_CHAT_FIELDS[k]: v for k, v in fields.items()}
+
+
+def _messages(question, history=None):
+    if isinstance(question, list):
+        return question
+    return [*(history or []), {"role": "user", "content": str(question)}]
+
+
+class Chat(_Resource):
+    """Chatbot de la ciudad (``city.chat``). Empieza escondido y, sin motor, responde «No sé»: el «cerebro» lo
+    ponéis vosotros (Ollama, una API compatible con OpenAI o vuestro propio servicio, ``provider="custom"``).
+
+    La ciudad es quien llama al motor: su ``url`` tiene que ser una dirección a la que llegue la ciudad (ver
+    «Chatbot» en el README del kit y ``examples/chatbot_service.py`` del simulador).
+    """
+
+    def state(self):
+        """``{"enabled": ..., "title": ...}``: si aparece en el visor y con qué nombre."""
+        return self._city.get("/api/chat")
+
+    def config(self):
+        """Configuración actual (sin la clave del motor; ``hasApiKey`` dice si hay una). Necesita el token."""
+        return self._city.get("/api/chat/config")
+
+    def configure(self, **fields):
+        """Cambia solo los campos que se pasan: ``enabled``, ``title``, ``provider`` (``none``, ``ollama``,
+        ``openai``, ``custom``), ``url``, ``model``, ``api_key``, ``system_prompt``, ``include_state``,
+        ``temperature``, ``max_tokens``, ``timeout_seconds``. Devuelve la configuración."""
+        return self._city._write("PUT", "/api/chat/config", _chat_config(fields))
+
+    def enable(self, enabled=True):
+        """Lo muestra (o lo esconde) en el visor."""
+        return self.configure(enabled=enabled)
+
+    def ask(self, question, history=None):
+        """Pregunta como el visor (tiene que estar activado). ``question``: texto (con ``history``, la conversación
+        anterior) o la lista de mensajes ``[{"role": "user" | "assistant", "content": ...}]``. Devuelve el texto."""
+        return self._city.request("POST", "/api/chat", body={"messages": _messages(question, history)}, timeout=_CHAT_TIMEOUT)["reply"]
+
+    def test(self, question, history=None, **fields):
+        """Prueba una configuración sin guardarla (aunque no esté activado): los campos como en :meth:`configure`."""
+        body = {"messages": _messages(question, history)}
+        if fields:
+            body["config"] = _chat_config(fields)
+        return self._city.request("POST", "/api/chat/test", body=body, timeout=_CHAT_TIMEOUT)["reply"]
+
+    def models(self, **fields):
+        """Modelos disponibles en el motor (el guardado o el de los campos que se pasan)."""
+        return self._city._write("POST", "/api/chat/models", {"config": _chat_config(fields)} if fields else {})["models"]
+
+    def pull(self, model, **fields):
+        """Descarga un modelo en Ollama (puede tardar minutos)."""
+        body = {"model": model}
+        if fields:
+            body["config"] = _chat_config(fields)
+        return self._city.request("POST", "/api/chat/pull", body=body, timeout=3600)

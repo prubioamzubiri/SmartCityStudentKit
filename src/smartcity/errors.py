@@ -38,7 +38,20 @@ class NotFoundError(SmartCityError):
 
 
 class ConflictError(SmartCityError):
-    """409: no se puede ahora (no quedan autobuses en la reserva, no hay ninguna furgoneta libre...)."""
+    """409: no se puede ahora (no quedan autobuses en la reserva, no hay ninguna furgoneta libre, límite de sensores...)."""
+
+
+class DataGapError(SmartCityError):
+    """Los datos que faltan en un fichero ya no se pueden descargar: el servidor solo da el último año simulado.
+
+    Atributos: ``kind`` (tipo de histórico), ``since`` (desde dónde se pedían) y ``available_from`` (desde cuándo hay).
+    """
+
+    def __init__(self, message, kind=None, since=None, available_from=None):
+        super().__init__(message)
+        self.kind = kind
+        self.since = since
+        self.available_from = available_from
 
 
 class PayloadTooLargeError(SmartCityError):

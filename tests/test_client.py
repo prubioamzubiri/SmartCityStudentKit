@@ -25,6 +25,7 @@ class ClientTest(unittest.TestCase):
 
     def setUp(self):
         self.server.calls.clear()
+        self.server.httpd.sensors.clear()
         self.city = SmartCity(self.server.url, token=TOKEN)
 
     def last(self):
@@ -199,6 +200,65 @@ class ClientTest(unittest.TestCase):
                     self.city.history.update("events", os.path.join(folder, "eventos.csv"))
         finally:
             self.server.httpd.csv = TRAFFIC_CSV
+
+    def test_history_only_last_year_and_gaps(self):
+        self.assertEqual(self.city.limits()["maxSensors"], 2)
+        limits = self.server.httpd.limits
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                path = os.path.join(folder, "trafico.csv")
+                self.city.history.update("traffic", path, id="S1")  # filas hasta las 8:05 del 5 de enero
+                with open(path, encoding="utf-8") as handle:
+                    before = handle.read()
+                # Pasa más de un año sin descargar: lo que falta ya no está.
+                limits["downloadFrom"] = "2026-01-06T00:00:00"
+                with self.assertRaises(smartcity.DataGapError) as caught:
+                    self.city.history.update("traffic", path, id="S1")
+                self.assertEqual(caught.exception.available_from.isoformat(), "2026-01-06T00:00:00")
+                self.assertIn("último año simulado", str(caught.exception))
+                with open(path, encoding="utf-8") as handle:
+                    self.assertEqual(handle.read(), before, "con el error, el fichero no se toca")
+                # Con on_gap="skip": avisa y sigue desde lo más antiguo que queda.
+                with self.assertWarns(UserWarning):
+                    self.city.history.update("traffic", path, on_gap="skip", id="S1")
+                self.assertEqual(self.last()["query"], {"from": "2026-01-06T00:00:00", "id": "S1"})
+                with self.assertRaises(ValueError):
+                    self.city.history.update("traffic", path, on_gap="otro")
+                # Directamente con la API, un from antiguo es un 400 con la fecha.
+                with self.assertRaises(smartcity.ValidationError) as caught:
+                    self.city.history.traffic(start="2026-01-05")
+                self.assertIn("2026-01-06T00:00:00", caught.exception.message)
+        finally:
+            limits["downloadFrom"] = "2026-01-05T00:00:00"
+
+    def test_sensor_limit(self):
+        self.city.sensors.create(x=1, z=2)
+        self.city.sensors.create(x=1, z=2)
+        with self.assertRaises(smartcity.ConflictError) as caught:
+            self.city.sensors.create(x=1, z=2)
+        self.assertIn("Límite de sensores", caught.exception.message)
+
+    def test_chat(self):
+        chat = self.city.chat
+        self.assertEqual(chat.state(), {"enabled": False, "title": "Asistente"})
+        with self.assertRaises(smartcity.NotFoundError):
+            chat.ask("¿Hola?")
+        self.assertEqual(chat.test("¿Hola?"), "No sé")
+        self.assertEqual(chat.test("¿Hola?", provider="ollama", model="llama3.2"), "Hola")
+        self.assertEqual(self.last()["body"]["config"], {"provider": "ollama", "model": "llama3.2"})
+        try:
+            config = chat.configure(enabled=True, provider="custom", url="http://10.14.4.50:5000/chat", api_key="k", include_state=True)
+            self.assertEqual(self.last()["body"], {"enabled": True, "provider": "custom", "url": "http://10.14.4.50:5000/chat", "apiKey": "k", "includeState": True})
+            self.assertTrue(config["hasApiKey"])
+            self.assertNotIn("apiKey", chat.config())
+            self.assertEqual(chat.ask("¿Cómo va el tráfico?", history=[{"role": "user", "content": "Hola"}, {"role": "assistant", "content": "Hola"}]), "No sé")
+            self.assertEqual(len(self.last()["body"]["messages"]), 3)
+            self.assertEqual(chat.models(provider="ollama", url="http://ollama:11434"), ["llama3.2"])
+            self.assertEqual(chat.pull("llama3.2")["status"], "success")
+            with self.assertRaises(TypeError):
+                chat.configure(modelo="x")
+        finally:
+            self.server.httpd.chat.update({"enabled": False, "provider": "none"})
 
     def test_history_dataframe(self):
         try:

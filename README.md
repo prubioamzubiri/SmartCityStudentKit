@@ -90,12 +90,18 @@ Algunos detalles del simulador que importan al gestionar:
   desde el visor (pestaña Bicis → Furgonetas), que las dibuja en el mapa.
 - Los coches eligen ruta con el tráfico de ahora (evitan los atascos) y van a los lugares con actividad: zonas de
   trabajo por la mañana de los laborables; centro, Parte Vieja y playas en el tiempo libre.
+- Los **históricos** solo se pueden descargar del **último año simulado** (una semana real): lo anterior hay que
+  haberlo guardado ya en vuestro sistema (ver «Recoger datos poco a poco»). Cada ciudad admite como mucho 100
+  sensores de cada tipo. `city.limits()` dice las dos cosas.
+- La ciudad puede estar en **castellano, euskera o inglés** (lo elige quien la despliega): cambian los mensajes de error
+  y los nombres que se inventa (eventos, festivos), pero **no** los campos del JSON, las columnas de los CSV ni los
+  códigos. La columna `weekday` sale en el idioma de la ciudad.
 
 ## Referencia rápida
 
 | Qué | Métodos |
 | --- | --- |
-| Estado general | `city.state()`, `city.health()`, `city.sim_time()`, `city.scale()`, `city.sleep_sim(...)`, `city.wait_until(hora)`, `city.docs()` |
+| Estado general | `city.state()`, `city.health()`, `city.sim_time()`, `city.scale()`, `city.limits()`, `city.sleep_sim(...)`, `city.wait_until(hora)`, `city.docs()` |
 | Cerca de un punto | `city.point(...)`, `city.roads(..., radius, limit)`, `city.road(way)` |
 | Entorno | `city.weather(hours)`, `city.events(start, end, type)`, `city.holidays(start, end)` |
 | Posiciones | `city.cars()`, `city.pedestrians()` |
@@ -107,7 +113,8 @@ Algunos detalles del simulador que importan al gestionar:
 | Semáforos | `city.signals.list(all=, lat=, lon=, radius=)`, `.get(id)`, `.update(id, mode=, green=, green_a=, green_b=, yellow=, schedule=)`, `.reset(id)`, `.plan()`, `.set_plan(default, signals)` |
 | Restricciones | `city.restrictions.list()`, `.get(id)`, `.create(mode, ...)`, `.close_streets(ways, buses=)`, `.limit_zone(limit, radius, lat=, lon=)`, `.update(id, mode=, limit=, name=)`, `.delete(id)`, `.clear()` |
 | Demanda | `city.state()["params"]` (solo lectura: la fija el servidor) |
-| Históricos | `city.history.traffic()`, `.pedestrians()`, `.parking()`, `.buses()`, `.bikes()`, `.city()`, `.weather()`, `.events()`, `.download(kind, path)`, `.update(kind, path)` (incremental), `.csv(kind)` |
+| Históricos | `city.history.traffic()`, `.pedestrians()`, `.parking()`, `.buses()`, `.bikes()`, `.city()`, `.weather()`, `.events()`, `.download(kind, path)`, `.update(kind, path, on_gap=)` (incremental), `.csv(kind)` |
+| Chatbot | `city.chat.state()`, `.config()`, `.configure(...)`, `.enable()`, `.test(pregunta, ...)`, `.ask(pregunta)`, `.models(...)`, `.pull(modelo)` |
 | Cualquier otra ruta | `city.request(method, path, params=, body=)`, `city.get(path, **params)` |
 
 Constantes con los valores admitidos: `RestrictionMode`, `SignalMode` y `Scenario`.
@@ -190,9 +197,15 @@ city.history.download("buses", "autobuses.csv", line_id="L1")
 Las fechas pueden ser texto ISO (`"2026-01-05"`, `"2026-01-05T08:00"`), `date` o `datetime`; son horas simuladas,
 `start` incluida y `end` excluida.
 
+**Solo el último año simulado.** Los históricos grabados (todos salvo `weather` y `events`) se pueden descargar solo de
+los últimos 365 días simulados, **una semana real**. Sin `start`, la descarga empieza ahí; con un `start` anterior, la
+API responde `ValidationError` diciendo desde cuándo hay datos (`city.limits()["downloadFrom"]`). Lo anterior **ya no
+se puede descargar**: hay que ir guardándolo (siguiente apartado).
+
 ### Recoger datos poco a poco
 
-Durante el proyecto se acumulan años simulados de datos: no hace falta descargarlo todo cada vez.
+Durante el proyecto se acumulan años simulados de datos, y la ciudad **solo da el último** (una semana real): hay
+que ir guardándolos en vuestro sistema. No hace falta descargarlo todo cada vez.
 `history.update(kind, path)` añade a un CSV solo las filas nuevas desde la última que tiene (la primera vez lo crea
 con todo). Devuelve cuántas filas ha añadido:
 
@@ -202,7 +215,21 @@ city.history.update("traffic", "datos/trafico_S1.csv", id="S1")   # un fichero p
 city.history.update("weather", "datos/tiempo.csv")
 ```
 
-Ejecútalo cada cierto tiempo (a mano, con `cron` o en un bucle: ver [`examples/recoger.py`](examples/recoger.py)).
+Ejecútalo **al menos una vez por semana real, y mejor cada día** (a mano, con `cron` o en un bucle: ver
+[`examples/recoger.py`](examples/recoger.py)). Si lo que le falta a un fichero ya no se puede descargar (habéis
+estado más de una semana sin recogerlo), `update` lanza `DataGapError` y no toca el fichero; con
+`update(..., on_gap="skip")` avisa y sigue desde lo más antiguo que queda, dejando el hueco en el fichero:
+
+```python
+from smartcity import DataGapError
+
+try:
+    city.history.update("city", "datos/ciudad.csv")
+except DataGapError as err:
+    print(err)                      # desde cuándo faltan y desde cuándo hay
+    city.history.update("city", "datos/ciudad.csv", on_gap="skip")   # seguir, con el hueco
+```
+
 Cada fila se graba cuando su intervalo termina, así que nunca llega una a medias; los eventos (`events`) no admiten
 descarga incremental porque su asistencia se publica al terminar. Con la API directamente es lo mismo: pide
 `?from=` la última hora que tienes más un segundo (`from` es inclusivo).
@@ -224,11 +251,38 @@ except ValidationError as err:
 | `AuthError` | 401: falta el token o no es válido |
 | `ForbiddenError` | 403: acción bloqueada (p. ej. `LOCK_PARAMS=1`) |
 | `NotFoundError` | 404: sensor, semáforo, calle, línea o restricción inexistente |
-| `ConflictError` | 409: no quedan autobuses en la reserva, no hay ninguna furgoneta libre |
+| `ConflictError` | 409: no quedan autobuses en la reserva, no hay ninguna furgoneta libre, límite de sensores (100 de cada tipo) |
+| `DataGapError` | `history.update`: lo que falta en el fichero ya no se puede descargar (solo el último año simulado) |
 | `PayloadTooLargeError` | 413: cuerpo mayor de 64 KB |
 | `SmartCityConnectionError` | No se puede contactar con el servidor |
 
 Todas heredan de `SmartCityError`.
+
+### Chatbot
+
+La ciudad tiene un chatbot que aparece en el visor (💬, abajo a la derecha) **cuando lo activáis**. Sin motor responde
+«No sé»: el «cerebro» lo ponéis vosotros. Se configura con el token, desde vuestro programa o desde la página de
+configuración (`chatadmin/` del simulador):
+
+```python
+city.chat.test("¿Cómo está el tráfico?", provider="ollama", url="http://ollama:11434", model="llama3.2")  # sin guardar
+city.chat.configure(enabled=True, title="Txiki", provider="custom",
+                    url="http://10.14.4.50:5000/chat", include_state=True)   # vuestro propio servicio
+city.chat.ask("¿Hay algún evento hoy?")      # como el visor
+```
+
+Con `provider="custom"`, la ciudad envía a vuestra URL `POST {"messages": [...], "instructions": "...", "city": "..."}`
+y espera `{"reply": "texto"}`; hay un ejemplo que funciona en `examples/chatbot_service.py` del simulador. **Es la
+ciudad quien llama a vuestro programa**, así que la dirección tiene que ser una a la que llegue la ciudad:
+
+| Dónde corre vuestro programa | Dirección |
+| --- | --- |
+| En el servidor de la ciudad (fuera de Docker o publicando el puerto) | `http://host.docker.internal:5000/chat` |
+| En otro equipo de la misma red | `http://<su IP>:5000/chat` (escuchando en `0.0.0.0` y con el puerto abierto) |
+| En un portátil en casa o detrás de un router | La ciudad no llega: ejecutadlo en la red del centro o en un servidor |
+
+`localhost` es la propia ciudad, nunca vuestro equipo. `No se puede conectar con el modelo (ECONNREFUSED)` = no hay
+nada escuchando en esa dirección.
 
 ### Gestor autónomo
 

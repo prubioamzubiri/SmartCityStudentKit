@@ -57,7 +57,9 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/api/health":
             return self._send(200, {"ok": True})
         if method == "GET" and path == "/api/state":
-            return self._send(200, STATE)
+            return self._send(200, {**STATE, "limits": self.server.limits})
+        if path == "/api/chat" or path.startswith("/api/chat/"):
+            return self._chat(method, path, body)
         if method == "GET" and path == "/api/docs.md":
             return self._send(200, "# API", "text/markdown")
         if method == "GET" and path == "/api/point":
@@ -112,6 +114,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/restrictions/"):
             return self._send(200, {"ok": True} if method == "DELETE" else {"id": path.rsplit("/", 1)[1]})
         if method == "POST" and path in ("/api/sensors", "/api/pedestrian-sensors"):
+            self.server.sensors[path] = self.server.sensors.get(path, 0) + 1
+            if self.server.sensors[path] > self.server.limits["maxSensors"]:
+                return self._send(409, {"error": f"Límite de sensores alcanzado ({self.server.limits['maxSensors']} de este tipo): borra alguno antes de poner otro"})
             return self._send(201, {"id": "S2" if path == "/api/sensors" else "P2", "name": body.get("name", "")})
         if path.startswith(("/api/sensors/", "/api/pedestrian-sensors/")):
             return self._send(200, {"ok": True})
@@ -120,6 +125,10 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and path.endswith(".csv"):
             # Como el servidor real: `from` incluido y `to` excluido (comparando la hora como texto ISO).
             source = WEATHER_CSV if path == "/api/weather.csv" else self.server.csv
+            # Como el servidor real: los históricos grabados solo desde limits.downloadFrom.
+            earliest = self.server.limits.get("downloadFrom")
+            if path != "/api/weather.csv" and earliest and query.get("from") and query["from"] < earliest:
+                return self._send(400, {"error": f"Solo se pueden descargar los últimos 365 días simulados: from debe ser {earliest} o posterior"})
             header, *rows = source.splitlines(keepends=True)
             column = 0
             rows = [r for r in rows if (not query.get("from") or r.split(",")[column] >= query["from"])
@@ -133,6 +142,27 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"current": {"condition": "rain"}, "forecast": []})
         return self._send(404, {"error": "No encontrado"})
 
+    def _chat(self, method, path, body):
+        chat = self.server.chat
+        if path == "/api/chat" and method == "GET":
+            return self._send(200, {"enabled": chat["enabled"], "title": chat["title"]})
+        if path == "/api/chat" and method == "POST":
+            if not chat["enabled"]:
+                return self._send(404, {"error": "El chatbot no está activado"})
+            return self._send(200, {"reply": "No sé"})
+        if path == "/api/chat/config" and method == "GET":
+            return self._send(200, {**{k: v for k, v in chat.items() if k != "apiKey"}, "hasApiKey": bool(chat.get("apiKey"))})
+        if path == "/api/chat/config" and method == "PUT":
+            chat.update(body)
+            return self._send(200, {**{k: v for k, v in chat.items() if k != "apiKey"}, "hasApiKey": bool(chat.get("apiKey"))})
+        if path == "/api/chat/test":
+            return self._send(200, {"reply": "No sé" if (body.get("config") or chat).get("provider", "none") == "none" else "Hola"})
+        if path == "/api/chat/models":
+            return self._send(200, {"models": ["llama3.2"]})
+        if path == "/api/chat/pull":
+            return self._send(200, {"status": "success"})
+        return self._send(404, {"error": "No encontrado"})
+
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = _handle
 
 
@@ -141,6 +171,9 @@ class FakeServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.calls = []
         self.httpd.csv = TRAFFIC_CSV
+        self.httpd.limits = {"downloadDays": 365, "maxSensors": 2, "downloadFrom": "2026-01-05T00:00:00"}
+        self.httpd.sensors = {}
+        self.httpd.chat = {"enabled": False, "title": "Asistente", "provider": "none", "url": "http://ollama:11434"}
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
         return self

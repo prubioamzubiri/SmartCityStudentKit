@@ -6,7 +6,7 @@
 """
 from .client import SmartCity, parse_csv, parse_sim_time
 from .constants import DEFAULT_SCALE, ORIGIN_LAT, ORIGIN_LON, RestrictionMode, Scenario, SignalMode
-from .errors import (AuthError, ConflictError, ForbiddenError, NotFoundError, PayloadTooLargeError,
+from .errors import (AuthError, ConflictError, DataGapError, ForbiddenError, NotFoundError, PayloadTooLargeError,
                      SmartCityConnectionError, SmartCityError, ValidationError)
 from .geo import distance, latlon_to_xz, xz_to_latlon
 
@@ -16,6 +16,6 @@ __all__ = [
     "SmartCity", "parse_csv", "parse_sim_time",
     "RestrictionMode", "SignalMode", "Scenario", "DEFAULT_SCALE", "ORIGIN_LAT", "ORIGIN_LON",
     "SmartCityError", "SmartCityConnectionError", "ValidationError", "AuthError", "ForbiddenError", "NotFoundError",
-    "PayloadTooLargeError", "ConflictError",
+    "PayloadTooLargeError", "ConflictError", "DataGapError",
     "latlon_to_xz", "xz_to_latlon", "distance",
 ]
